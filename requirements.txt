@@ -1,0 +1,7 @@
+# Drivers de Integración y Mensajería
+pika>=1.3.2              # AMQP 0-9-1 para RabbitMQ
+psycopg2-binary>=2.9.9   # Driver para PostgreSQL
+boto3>=1.34.0            # SDK para Amazon S3 / MinIO
+
+# Testing y Calidad de Código
+pytest>=8.0.0            # Framework de testing automatizado

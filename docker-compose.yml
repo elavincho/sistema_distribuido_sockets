@@ -1,0 +1,147 @@
+version: '3.8'
+
+services:
+  # 1. Balanceador de Carga L4 para Sockets TCP
+  haproxy:
+    image: haproxy:2.8-alpine
+    container_name: dist_haproxy
+    ports:
+      - "9000:9000"      # Entrada principal TCP para clientes
+      - "8404:8404"      # Dashboard de métricas de HAProxy
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - server-1
+      - server-2
+    networks:
+      - dist_network
+
+  # 2. Servidores Socket Gateways (Clúster de Ingesta)
+  server-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dist_server_1
+    command: python server.py --port 9001 --server-id srv-node-1
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - POSTGRES_HOST=postgres
+      - S3_ENDPOINT_URL=http://minio:9000
+    depends_on:
+      - rabbitmq
+      - postgres
+      - minio
+    networks:
+      - dist_network
+
+  server-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dist_server_2
+    command: python server.py --port 9002 --server-id srv-node-2
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - POSTGRES_HOST=postgres
+      - S3_ENDPOINT_URL=http://minio:9000
+    depends_on:
+      - rabbitmq
+      - postgres
+      - minio
+    networks:
+      - dist_network
+
+  # 3. Cola de Mensajes (RabbitMQ)
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: dist_rabbitmq
+    ports:
+      - "5672:5672"      # Puerto AMQP
+      - "15672:15672"    # Web Dashboard
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    networks:
+      - dist_network
+
+  # 4. Servidores Workers (ThreadPoolExecutor)
+  worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dist_worker_1
+    command: python worker.py --worker-id wrk-node-1 --threads 4
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - POSTGRES_HOST=postgres
+      - S3_ENDPOINT_URL=http://minio:9000
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+    depends_on:
+      - rabbitmq
+      - postgres
+      - minio
+    networks:
+      - dist_network
+
+  worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dist_worker_2
+    command: python worker.py --worker-id wrk-node-2 --threads 4
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - POSTGRES_HOST=postgres
+      - S3_ENDPOINT_URL=http://minio:9000
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+    depends_on:
+      - rabbitmq
+      - postgres
+      - minio
+    networks:
+      - dist_network
+
+  # 5. Base de Datos Relacional Distribuida
+  postgres:
+    image: postgres:16-alpine
+    container_name: dist_postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=tasks_db
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - dist_network
+
+  # 6. Almacenamiento de Objetos Distribuido (S3 Compatible)
+  minio:
+    image: minio/minio:RELEASE.2024-03-05T04-48-44Z
+    container_name: dist_minio
+    ports:
+      - "9003:9000"      # S3 API
+      - "9004:9001"      # MinIO Console
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - miniodata:/data
+    networks:
+      - dist_network
+
+volumes:
+  pgdata:
+  miniodata:
+
+networks:
+  dist_network:
+    driver: bridge
